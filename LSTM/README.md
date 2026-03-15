@@ -1,57 +1,87 @@
 # LSTM From Scratch (NumPy)
 
-This project demonstrates a **simple implementation of a Long Short-Term Memory (LSTM) network built from scratch using NumPy**.
+This project demonstrates a **Long Short-Term Memory (LSTM) neural network implemented completely from scratch using NumPy**.
 
-The goal of this project is educational: to understand **how LSTM networks work internally** without using deep learning frameworks such as TensorFlow or PyTorch.
+The goal of this repository is educational: to understand **how LSTMs work internally**, including the forward pass, memory updates, and **Backpropagation Through Time (BPTT)** — without relying on deep learning libraries such as TensorFlow or PyTorch.
 
 ---
 
 # What is an LSTM?
 
-LSTM (Long Short-Term Memory) is a special type of Recurrent Neural Network (RNN) designed to **remember information for long periods of time**.
+LSTM (Long Short-Term Memory) is a type of **Recurrent Neural Network (RNN)** designed to learn patterns in **sequential data** such as:
 
-Traditional RNNs often suffer from the **vanishing gradient problem**, which makes it difficult to learn long-term dependencies in sequences.
+* text
+* speech
+* time series
+* signals
 
-LSTM solves this by introducing a **cell state** and several **gates** that control the flow of information.
+Traditional RNNs struggle with long sequences due to the **vanishing gradient problem**. LSTM solves this by introducing a **memory cell** that allows information to flow across many time steps.
+
+This memory is controlled by special components called **gates**.
 
 ---
 
 # How LSTM Works (Simplified)
 
-At each time step the LSTM processes an input and updates two states:
+At every time step, the LSTM processes:
 
-* **Hidden state (h)** → the output of the network
-* **Cell state (c)** → the internal memory of the network
+* **xₜ** → current input
+* **hₜ₋₁** → previous hidden state
+* **cₜ₋₁** → previous cell state (memory)
 
-The behavior of the LSTM is controlled by several gates:
+The network computes four components:
 
 ### 1. Forget Gate
 
-Decides **what information from the previous memory should be removed**.
+Controls what information from the previous memory should be **removed**.
 
 ### 2. Input Gate
 
-Decides **what new information should be added to the memory**.
+Controls what new information should be **stored** in memory.
 
-### 3. Update / Candidate
+### 3. Cell Candidate
 
-Creates **new candidate information** that may be stored in the cell state.
+Creates **new candidate information** that may be added to the memory.
 
 ### 4. Output Gate
 
-Controls **what part of the memory becomes the output**.
+Controls what information from memory becomes the **output**.
 
-Together these gates allow the LSTM to **learn patterns in sequential data such as text, speech, or time-series data**.
+The memory update is:
+
+```
+c_t = f_t * c_(t-1) + i_t * g_t
+```
+
+The hidden state is:
+
+```
+h_t = o_t * tanh(c_t)
+```
+
+In this educational implementation, **tanh is used for all gates** to keep the math simple.
 
 ---
 
-# Project Overview
+# What This Project Does
 
-This project contains a minimal implementation of an LSTM network using only **NumPy**.
+The project trains an LSTM to perform **next-character prediction** on a short text sequence.
 
-The model processes text **character by character** and produces a simple prediction for the next character based on the hidden state.
+Example:
 
-The purpose is to **visualize and understand how the LSTM updates its internal memory step by step**.
+```
+Input text: dogs
+```
+
+The model learns the pattern:
+
+```
+d → o
+o → g
+g → s
+```
+
+After training, the LSTM attempts to predict the **next character** at each step.
 
 ---
 
@@ -61,28 +91,49 @@ The purpose is to **visualize and understand how the LSTM updates its internal m
 LSTM/
 │
 ├── main.py
-├── train.py
+└── train.py
 ```
 
-### `train.py`
+### train.py
 
-Contains the core **LSTM implementation**, including:
+Contains the full **LSTM implementation**, including:
 
-* LSTM weight initialization
-* Gate calculations
-* Forward pass
-* Backward pass (for gradient computation)
+* weight initialization
+* forward pass
+* Backpropagation Through Time (BPTT)
+* gradient accumulation across timesteps
+* SGD weight updates
 
-The implementation shows how the hidden state and cell state evolve during computation.
+### main.py
 
-### `main.py`
+Handles the **training pipeline**:
 
-Provides a **simple text prediction pipeline**:
+1. Build vocabulary from input text
+2. Encode characters as normalized numbers
+3. Train the LSTM using **BPTT**
+4. Predict the next character at each timestep
 
-1. Builds a character vocabulary from the input text
-2. Encodes characters into normalized numeric values
-3. Feeds them sequentially into the LSTM
-4. Prints the hidden state and predicted next character at each step
+---
+
+# Training Process
+
+For each epoch the model performs:
+
+### 1. Forward Pass
+
+Run the LSTM through all characters in the sequence.
+
+### 2. Loss Computation
+
+Mean Squared Error between predictions and targets.
+
+### 3. Backpropagation Through Time
+
+The sequence is processed **in reverse order** to compute gradients.
+
+### 4. Weight Update
+
+Weights are updated using **Stochastic Gradient Descent (SGD)**.
 
 ---
 
@@ -106,53 +157,50 @@ Run the program:
 python main.py
 ```
 
-Then enter any text:
+Enter a text sequence:
 
 ```
-Enter text: hello
+Enter text: dogs
 ```
-
-The program will display the step-by-step LSTM computation and predicted characters.
 
 ---
 
 # Example Output
 
 ```
-Step   Char     Input     h_next      c_next   Predicted next
-------------------------------------------------------------
-0      'h'      -0.600     0.12345    0.32100  → 'e'
-1      'e'      -0.200     0.21300    0.41231  → 'l'
-2      'l'       0.200     0.31211    0.51234  → 'l'
-...
+Full BPTT Training
+Text: 'dogs'
+
+Epoch 1/200  | Loss: 0.256844
+Epoch 200/200 | Loss: 0.172910
+```
+
+Prediction phase:
+
+```
+Step   Char   Input   h_next   c_next   Predicted next
+0      'd'   -1.000   0.18952  0.22181  → 'o'
+1      'o'    0.333  -0.48189 -0.56020  → 'g'
+2      'g'   -0.333   0.31082  0.44959  → 'o'
+3      's'    1.000  -0.68394 -0.87769  → 'd'
 ```
 
 ---
 
 # Why This Project Exists
 
-This project was built to:
+This implementation was created to:
 
-* Understand **LSTM internals**
-* Learn how **gates control memory flow**
-* Practice implementing neural networks **from scratch using NumPy**
+* Understand **how LSTM memory works**
+* Learn **Backpropagation Through Time**
+* Practice implementing neural networks using **only NumPy**
+* Build intuition about **sequence models**
 
-It is intended for **learning and experimentation**, not production use.
-
----
-
-# Future Improvements
-
-Possible improvements include:
-
-* Implement full **Backpropagation Through Time (BPTT)**
-* Train the model on larger text datasets
-* Add **visualizations of gate activations**
-* Expand to full **sequence generation**
+It is designed for **learning and experimentation**, not production use.
 
 ---
 
 # Author
 
-Omar Ahmed Al-Beltagy
+**Omar Ahmed Al-Beltagy**
 AI Student | Machine Learning Enthusiast
