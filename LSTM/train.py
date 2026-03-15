@@ -8,17 +8,12 @@ class LSTM:
         self.ww = np.random.randn()   # U_f (hidden)
         self.wb = np.random.randn()   # b_f (bias)
 
-        # Update gate weights: W_u·x + U_u·h + b_u
-        self.wu = np.random.randn()   # W_u
-        self.wv = np.random.randn()   # U_u
-        self.wc = np.random.randn()   # b_u
-
         # Input gate weights: W_i·x + U_i·h + b_i
         self.wi = np.random.randn()   # W_i
         self.wj = np.random.randn()   # U_i
         self.wk = np.random.randn()   # b_i
 
-        # Cell candidate weights: W_g·x + U_g·h + b_g  (computed but not yet wired into c_next)
+        # Cell candidate weights: W_g·x + U_g·h + b_g
         self.wl = np.random.randn()   # W_g
         self.wm = np.random.randn()   # U_g
         self.wn = np.random.randn()   # b_g
@@ -29,106 +24,104 @@ class LSTM:
         self.wq = np.random.randn()   # b_o
 
     # ------------------------------------------------------------------
-    # Gate activations  (all use tanh here — standard uses sigmoid for
-    # f, u, i, o and tanh only for the cell candidate g)
+    # Gate activations
+    # Standard LSTM uses sigmoid for f, i, o and tanh for g.
+    # We use tanh everywhere for simplicity (educational implementation).
     # ------------------------------------------------------------------
 
-    def forget_gate(self, x, h_prev, c_prev):
-        return np.tanh(np.dot(x, self.wx) + np.dot(h_prev, self.ww) + self.wb)
+    def _forget_gate(self, x, h_prev):
+        return np.tanh(x * self.wx + h_prev * self.ww + self.wb)
 
-    def update_gate(self, x, h_prev, c_prev):
-        return np.tanh(np.dot(x, self.wu) + np.dot(h_prev, self.wv) + self.wc)
+    def _input_gate(self, x, h_prev):
+        return np.tanh(x * self.wi + h_prev * self.wj + self.wk)
 
-    def input_gate(self, x, h_prev, c_prev):
-        return np.tanh(np.dot(x, self.wi) + np.dot(h_prev, self.wj) + self.wk)
+    def _cell_candidate(self, x, h_prev):
+        return np.tanh(x * self.wl + h_prev * self.wm + self.wn)
 
-    def cell_state(self, x, h_prev, c_prev):
-        # Cell candidate — computed here but not yet used in c_next below.
-        # Wire it in when you're ready: c_next = f*c_prev + u*g
-        return np.tanh(np.dot(x, self.wl) + np.dot(h_prev, self.wm) + self.wn)
-
-    def output_gate(self, x, h_prev, c_prev):
-        return np.tanh(np.dot(x, self.wo) + np.dot(h_prev, self.wp) + self.wq)
+    def _output_gate(self, x, h_prev):
+        return np.tanh(x * self.wo + h_prev * self.wp + self.wq)
 
     # ------------------------------------------------------------------
-    # Forward pass — returns h_next, c_next and caches for backward
+    # Forward pass
+    #
+    # Returns h_next, c_next, and a cache tuple needed for backward.
+    # Each call saves its own cache so every timestep can be unwound
+    # independently during BPTT.
     # ------------------------------------------------------------------
 
     def forward(self, x, h_prev, c_prev):
-        f = self.forget_gate(x, h_prev, c_prev)   # forget gate
-        u = self.update_gate(x, h_prev, c_prev)   # update / input modulation
-        i = self.input_gate(x, h_prev, c_prev)    # input gate
-        g = self.cell_state(x, h_prev, c_prev)    # cell candidate (unused in c_next for now)
-        o = self.output_gate(x, h_prev, c_prev)   # output gate
+        f = self._forget_gate(x, h_prev)      # forget gate
+        i = self._input_gate(x, h_prev)       # input gate
+        g = self._cell_candidate(x, h_prev)   # cell candidate
+        o = self._output_gate(x, h_prev)      # output gate
 
-        c_next = f * c_prev + u * i               # cell state update
-        h_next = o * np.tanh(c_next)              # hidden state
+        c_next = f * c_prev + i * g           # standard LSTM cell state
+        h_next = o * np.tanh(c_next)          # hidden state
 
-        # Cache everything needed for backward
-        self.cache = (x, h_prev, c_prev, f, u, i, g, o, c_next)
-        return h_next, c_next
+        cache = (x, h_prev, c_prev, f, i, g, o, c_next)
+        return h_next, c_next, cache
 
     # ------------------------------------------------------------------
-    # Backward pass
-    #
-    # dh_next : gradient of loss w.r.t. h_next  (flows in from next timestep or loss)
-    # dc_next : gradient of loss w.r.t. c_next  (flows in from next timestep)
-    #
-    # Returns gradients w.r.t. inputs so you can chain timesteps (BPTT):
-    #   dx, dh_prev, dc_prev
-    # Also stores weight gradients on self: self.d<weight>
+    # Gradient bookkeeping helpers
     # ------------------------------------------------------------------
 
-    def backward(self, dh_next, dc_next):
-        x, h_prev, c_prev, f, u, i, g, o, c_next = self.cache
+    def zero_grads(self):
+        """Reset all accumulated weight gradients to zero before a new pass."""
+        self.dwx = self.dww = self.dwb = 0.0
+        self.dwi = self.dwj = self.dwk = 0.0
+        self.dwl = self.dwm = self.dwn = 0.0
+        self.dwo = self.dwp = self.dwq = 0.0
+
+    # ------------------------------------------------------------------
+    # Backward pass — single timestep
+    #
+    # dh_next : ∂L/∂h_t  (from loss at t  PLUS  gradient from t+1)
+    # dc_next : ∂L/∂c_t  (flowing back from t+1 through the cell highway)
+    # cache   : saved activations for this specific timestep
+    #
+    # Uses += so gradients ACCUMULATE across all T timesteps (true BPTT).
+    #
+    # Returns (dx, dh_prev, dc_prev) to chain into timestep t-1.
+    # ------------------------------------------------------------------
+
+    def backward_step(self, dh_next, dc_next, cache):
+        x, h_prev, c_prev, f, i, g, o, c_next = cache
 
         # ---- 1. Gradient through h_next = o * tanh(c_next) ----
-        tanh_c_next = np.tanh(c_next)
+        tanh_c = np.tanh(c_next)
+        do      = dh_next * tanh_c
+        dc_next = dc_next + dh_next * o * (1 - tanh_c ** 2)  # add upstream dc
 
-        do      = dh_next * tanh_c_next                    # ∂L/∂o
-        dc_next = dc_next + dh_next * o * (1 - tanh_c_next ** 2)  # add upstream dc
+        # ---- 2. Gradient through c_next = f*c_prev + i*g ----
+        df      = dc_next * c_prev   # ∂L/∂f
+        dc_prev = dc_next * f        # ∂L/∂c_prev  → previous timestep
+        di      = dc_next * g        # ∂L/∂i
+        dg      = dc_next * i        # ∂L/∂g
 
-        # ---- 2. Gradient through c_next = f*c_prev + u*i ----
-        df      = dc_next * c_prev    # ∂L/∂f
-        dc_prev = dc_next * f         # ∂L/∂c_prev  (pass to previous timestep)
-        du      = dc_next * i         # ∂L/∂u
-        di      = dc_next * u         # ∂L/∂i
+        # ---- 3. Backprop through tanh: d/dz tanh(z) = 1 - tanh²(z) ----
+        dz_f = df * (1 - f ** 2)
+        dz_i = di * (1 - i ** 2)
+        dz_g = dg * (1 - g ** 2)
+        dz_o = do * (1 - o ** 2)
 
-        # ---- 3. Backprop through tanh activations: d/dx tanh(z) = 1 - tanh²(z) ----
-        dz_f = df * (1 - f ** 2)    # pre-activation gradient for forget gate
-        dz_u = du * (1 - u ** 2)    # pre-activation gradient for update gate
-        dz_i = di * (1 - i ** 2)    # pre-activation gradient for input gate
-        dz_o = do * (1 - o ** 2)    # pre-activation gradient for output gate
-        # (cell candidate g is not wired into the graph yet, so dz_g = 0)
+        # ---- 4. Accumulate weight gradients across timesteps (BPTT) ----
+        self.dwx += dz_f * x;  self.dww += dz_f * h_prev;  self.dwb += dz_f
+        self.dwi += dz_i * x;  self.dwj += dz_i * h_prev;  self.dwk += dz_i
+        self.dwl += dz_g * x;  self.dwm += dz_g * h_prev;  self.dwn += dz_g
+        self.dwo += dz_o * x;  self.dwp += dz_o * h_prev;  self.dwq += dz_o
 
-        # ---- 4. Weight gradients ----
-        # Forget gate
-        self.dwx = dz_f * x
-        self.dww = dz_f * h_prev
-        self.dwb = dz_f
-
-        # Update gate
-        self.dwu = dz_u * x
-        self.dwv = dz_u * h_prev
-        self.dwc = dz_u             # bias gradient (reusing weight name wc)
-
-        # Input gate
-        self.dwi = dz_i * x
-        self.dwj = dz_i * h_prev
-        self.dwk = dz_i
-
-        # Output gate
-        self.dwo = dz_o * x
-        self.dwp = dz_o * h_prev
-        self.dwq = dz_o
-
-        # Cell candidate — zero for now since g is not wired in
-        self.dwl = 0.0
-        self.dwm = 0.0
-        self.dwn = 0.0
-
-        # ---- 5. Input / hidden gradients (to pass to previous layer/timestep) ----
-        dx     = dz_f * self.wx + dz_u * self.wu + dz_i * self.wi + dz_o * self.wo
-        dh_prev = dz_f * self.ww + dz_u * self.wv + dz_i * self.wj + dz_o * self.wp
+        # ---- 5. Pass gradients to previous timestep ----
+        dx      = dz_f * self.wx + dz_i * self.wi + dz_g * self.wl + dz_o * self.wo
+        dh_prev = dz_f * self.ww + dz_i * self.wj + dz_g * self.wm + dz_o * self.wp
 
         return dx, dh_prev, dc_prev
+
+    # ------------------------------------------------------------------
+    # SGD weight update
+    # ------------------------------------------------------------------
+
+    def update_weights(self, lr):
+        self.wx -= lr * self.dwx;  self.ww -= lr * self.dww;  self.wb -= lr * self.dwb
+        self.wi -= lr * self.dwi;  self.wj -= lr * self.dwj;  self.wk -= lr * self.dwk
+        self.wl -= lr * self.dwl;  self.wm -= lr * self.dwm;  self.wn -= lr * self.dwn
+        self.wo -= lr * self.dwo;  self.wp -= lr * self.dwp;  self.wq -= lr * self.dwq
